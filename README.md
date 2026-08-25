@@ -378,7 +378,7 @@ source install/setup.bash
 | 단계 | 경유지 | 도달 판정 | 목표 | 전환 기준 |
 |---|---|---|---|---|
 | A | 1개 (3.0) | 반경 0.9, hold 1, 통과 평면 1.0 | 장애물 회피 | 성공률 ~70% |
-| B | 1개 (3.0) | 반경 0.60, hold 1 | 정밀 도달 | 성공률 ~70% |
+| B | 1개 (3.0) | 반경 0.60, hold 1 | 정밀 도달 + 양방향 회피 | 성공률 ~70% |
 | C | 2개 (3.0, 6.0) | 반경 0.60, hold 1 | 연속 전환 | 성공률 ~60% |
 | D | 3개 (3.0, 6.0, 9.5) | 반경 0.60, hold 1 | 최종 | — |
 
@@ -398,19 +398,22 @@ ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
 
 # B: 도달 판정을 스펙대로 조인다
 ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
-  --waypoints 1 --waypoint-hold-steps 1 --resume runs/limo_delivery_rl_v2/stage_a.zip \
+  --waypoints 1 --waypoint-hold-steps 1 --randomize-obstacles \
+  --resume runs/limo_delivery_rl_v2/stage_a.zip \
   --total-timesteps 150000 \
   --save-path runs/limo_delivery_rl_v2/stage_b --tb-log-name stage_b
 
 # C: 경유지 2개
 ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
-  --waypoints 2 --waypoint-hold-steps 1 --resume runs/limo_delivery_rl_v2/stage_b.zip \
+  --waypoints 2 --waypoint-hold-steps 1 --randomize-obstacles \
+  --resume runs/limo_delivery_rl_v2/stage_b.zip \
   --total-timesteps 200000 \
   --save-path runs/limo_delivery_rl_v2/stage_c --tb-log-name stage_c
 
 # D: 전체
 ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
-  --waypoints 3 --waypoint-hold-steps 1 --resume runs/limo_delivery_rl_v2/stage_c.zip \
+  --waypoints 3 --waypoint-hold-steps 1 --randomize-obstacles \
+  --resume runs/limo_delivery_rl_v2/stage_c.zip \
   --total-timesteps 500000 \
   --save-path runs/limo_delivery_rl_v2/final_model --tb-log-name stage_d
 ```
@@ -436,11 +439,29 @@ ros2 run limo_delivery_rl_v2 delivery_v2_eval_ppo \
 진행방향은 이전 경유지(첫 경유지는 시작 pose)에서 현재 경유지로 향하는 방향이다.
 기본값 `0.0`은 이 판정을 끄고 스펙의 반경 + 5 step 규칙만 남긴다.
 
+### 장애물 랜덤화
+
+고정 장애물 `(2.07, -0.18)`은 항상 중심선 오른쪽이라 정책이 **좌회피만** 학습한다.
+`--randomize-obstacles`를 주면 에피소드마다 pose를 다시 뽑는다.
+
+| | |
+|---|---|
+| `x_range` | `[1.70, 2.40]` — 반응 거리 ≥1.4 m, 경유지까지 복귀 거리 ≥0.6 m |
+| `y_range` | `[-0.20, +0.20]` |
+
+두 범위는 `map.pgm`으로 검증했다. 전 구간이 free-space이고(위반 0개),
+**모든 위치가 경로 중심선을 막는다** (`|y| - 0.125 < 0.0875`). 즉 직진으로는 절대
+통과할 수 없어 정책이 한쪽 방향을 외우는 대신 매번 `/scan`으로 방향을 골라야 한다.
+200 에피소드 표본에서 좌회피 89 / 우회피 111로 균형이 잡힌다.
+
+엔티티 이름은 고정하고 pose만 바꾸므로, 리셋 시 이름 기준 삭제가 항상 직전 장애물을
+제거한다. 장애물은 여전히 **전역 경로 계산이 끝난 뒤에** spawn되므로 경로는 영향받지 않는다.
+
 ### 장애물 단계
 
 1. 장애물 없는 경로 추종 (`ObstacleConfig.enabled = False`) — 경로 추종이 이미 되면 생략 가능
 2. 고정 장애물 1개 `(2.07, -0.18)`
-3. 검증된 free-space 내 정적 장애물 위치 랜덤화
+3. `--randomize-obstacles` — 검증된 free-space 내 위치 랜덤화
 4. 정적 장애물 다수
 5. 동적 장애물 추가 — **이동 구간과 속도는 아직 미정이다.**
    3단계가 성공한 뒤 시작점 · 종료점 · 속도를 확정하고 진행한다.

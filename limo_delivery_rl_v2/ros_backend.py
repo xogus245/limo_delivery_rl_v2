@@ -14,7 +14,7 @@ import numpy as np
 from limo_delivery_rl_v2.env_backend import BackendFrame
 from limo_delivery_rl_v2.gazebo_reset import GazeboResetManager, ObstacleManager
 from limo_delivery_rl_v2.ros_bridge import Nav2PlanningError, RosBridge
-from limo_delivery_rl_v2.state import DeliveryEnvConfig
+from limo_delivery_rl_v2.state import DeliveryEnvConfig, ObstacleSpec
 
 
 class RosBackend:
@@ -42,6 +42,7 @@ class RosBackend:
         self,
         start_pose: tuple[float, float, float],
         waypoints: Sequence[tuple[float, float, float]],
+        obstacles: Sequence[ObstacleSpec] = (),
     ) -> tuple[tuple[tuple[float, float], ...], BackendFrame]:
         """Run the full reset order and return the planned path and first frame."""
         self._reset_manager.reset_robot(start_pose)
@@ -72,7 +73,7 @@ class RosBackend:
 
         # Steps 15-16: obstacles appear only now, and the first observation must
         # already show them.
-        self._obstacles.spawn_all()
+        self._obstacles.spawn_all(obstacles)
         before_scan, before_odom = self._node.sensor_sequences()
         self._node.wait_for_sensors(
             before_scan, before_odom, self._config.gazebo.sensor_refresh_timeout_sec

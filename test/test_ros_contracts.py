@@ -100,14 +100,29 @@ def test_obstacle_sdf_describes_the_configured_box():
 
 
 def test_the_static_map_is_only_ever_read_never_written():
-    """Obstacles live in Gazebo only; nothing may write map.yaml or map.pgm."""
+    """Obstacles live in Gazebo only; nothing may write map.yaml or map.pgm.
+
+    Docstrings are stripped first -- several modules legitimately *explain* that
+    the map ranges were verified against map.pgm.
+    """
+    import ast
     import pathlib
 
     package = pathlib.Path(__file__).resolve().parents[1] / "limo_delivery_rl_v2"
+
+    def executable_source(path: pathlib.Path) -> str:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            body = getattr(node, "body", None)
+            if isinstance(body, list) and body and isinstance(body[0], ast.Expr):
+                if isinstance(getattr(body[0], "value", None), ast.Constant):
+                    body.pop(0)
+        return ast.unparse(tree)
+
     referencing = {
         source.name
         for source in package.glob("*.py")
-        if "map.pgm" in source.read_text() or "yaml_path" in source.read_text()
+        if "map.pgm" in executable_source(source) or "yaml_path" in executable_source(source)
     }
 
     # Only the config dataclass names the files and only map_utils touches them.

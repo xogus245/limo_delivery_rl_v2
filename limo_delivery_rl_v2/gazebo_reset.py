@@ -8,6 +8,7 @@ teleports the robot without a time jump.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 
 from gazebo_msgs.srv import DeleteEntity, SetEntityState, SpawnEntity
 from nav2_msgs.srv import ClearEntireCostmap
@@ -88,9 +89,9 @@ class ObstacleManager:
         """Obstacles that this manager owns."""
         return self._config.obstacles.specs if self._config.obstacles.enabled else ()
 
-    def spawn_all(self) -> None:
-        """Spawn every configured obstacle, raising on failure."""
-        for spec in self.specs:
+    def spawn_all(self, specs: "Sequence[ObstacleSpec] | None" = None) -> None:
+        """Spawn ``specs`` (default: the configured poses), raising on failure."""
+        for spec in (self.specs if specs is None else specs):
             request = SpawnEntity.Request()
             request.name = spec.name
             request.xml = obstacle_sdf(spec)
@@ -110,7 +111,11 @@ class ObstacleManager:
                 raise GazeboResetError(f"failed to spawn obstacle '{spec.name}'")
 
     def remove_all(self) -> None:
-        """Delete every configured obstacle, tolerating ones that do not exist."""
+        """Delete every obstacle by name, tolerating ones that do not exist.
+
+        Randomised episodes keep the entity names fixed and vary only the pose,
+        so deleting by name always removes the previous episode's obstacle.
+        """
         for spec in self.specs:
             request = DeleteEntity.Request()
             request.name = spec.name

@@ -246,3 +246,77 @@ def test_no_dwell_stage_finishes_sooner_than_the_dwelling_default():
         env.close()
 
     assert lengths[1] <= lengths[5]
+
+
+# ------------------------------------------------------- obstacle randomisation
+
+OBSTACLE_HALF = 0.125
+ROBOT_HALF_WIDTH = 0.0875   # base_y_size/2 + wheel_length/2
+CORRIDOR = (-1.4, 1.05)     # measured free-space band in map.pgm for x in [0, 12]
+
+
+def sampled_obstacles(seeds=range(60), **stage):
+    """Collect the obstacle poses the env draws across many episodes."""
+    env = LimoWaypointRLEnv(config=stage_config(**stage), enable_ros=False)
+    poses = []
+    for seed in seeds:
+        env.reset(seed=seed)
+        poses.extend((spec.x, spec.y) for spec in env.episode_obstacles)
+    env.close()
+    return poses
+
+
+def test_obstacles_are_fixed_unless_randomisation_is_requested():
+    poses = set(sampled_obstacles(waypoint_count=1))
+
+    assert poses == {(2.07, -0.18)}
+    assert DeliveryEnvConfig().obstacles.randomize is False
+
+
+def test_randomised_poses_stay_inside_the_configured_ranges():
+    obstacles = DeliveryEnvConfig().obstacles
+    poses = sampled_obstacles(waypoint_count=1, obstacles_randomized=True)
+
+    assert len(poses) >= 60
+    for x, y in poses:
+        assert obstacles.x_range[0] <= x <= obstacles.x_range[1]
+        assert obstacles.y_range[0] <= y <= obstacles.y_range[1]
+
+
+def test_randomised_poses_stay_clear_of_the_corridor_walls():
+    for _x, y in sampled_obstacles(waypoint_count=1, obstacles_randomized=True):
+        assert CORRIDOR[0] < y - OBSTACLE_HALF
+        assert y + OBSTACLE_HALF < CORRIDOR[1]
+
+
+def test_every_sampled_pose_still_blocks_the_centreline():
+    """Otherwise the robot could drive straight through and learn nothing."""
+    for _x, y in sampled_obstacles(waypoint_count=1, obstacles_randomized=True):
+        assert abs(y) - OBSTACLE_HALF < ROBOT_HALF_WIDTH
+
+
+def test_randomisation_produces_obstacles_on_both_sides_of_the_path():
+    ys = [y for _x, y in sampled_obstacles(waypoint_count=1, obstacles_randomized=True)]
+
+    assert sum(1 for y in ys if y < 0) >= 10, "no left-hand avoidance episodes"
+    assert sum(1 for y in ys if y > 0) >= 10, "no right-hand avoidance episodes"
+
+
+def test_randomisation_is_reproducible_for_a_fixed_seed():
+    first = sampled_obstacles(seeds=[7], waypoint_count=1, obstacles_randomized=True)
+    second = sampled_obstacles(seeds=[7], waypoint_count=1, obstacles_randomized=True)
+
+    assert first == second
+
+
+def test_disabled_obstacles_beat_randomisation():
+    assert sampled_obstacles(
+        waypoint_count=1, obstacles_enabled=False, obstacles_randomized=True
+    ) == []
+
+
+def test_the_randomise_flag_reaches_the_stage_config():
+    args = build_parser().parse_args(["--randomize-obstacles"])
+
+    assert build_stage_config(args).obstacles.randomize is True
+    assert build_stage_config(build_parser().parse_args([])).obstacles.randomize is False

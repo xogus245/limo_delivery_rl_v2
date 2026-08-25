@@ -201,10 +201,19 @@ class ObstacleSpec:
 
 @dataclass(frozen=True, slots=True)
 class ObstacleConfig:
-    """Training obstacles. They are never written into ``map.pgm``."""
+    """Training obstacles. They are never written into ``map.pgm``.
+
+    With ``randomize`` the pose is resampled every episode inside the ranges
+    below. Both ranges were checked against ``map.pgm``: every position in them
+    is free space, and every one of them blocks the path centreline, so the
+    policy must commit to a side rather than memorising one turn direction.
+    """
 
     enabled: bool = True
     specs: tuple[ObstacleSpec, ...] = (ObstacleSpec(),)
+    randomize: bool = False
+    x_range: tuple[float, float] = (1.70, 2.40)
+    y_range: tuple[float, float] = (-0.20, 0.20)
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,6 +282,7 @@ def stage_config(
     waypoint_hold_steps: int | None = None,
     waypoint_capture_width: float | None = None,
     obstacles_enabled: bool | None = None,
+    obstacles_randomized: bool | None = None,
 ) -> DeliveryEnvConfig:
     """Build a curriculum-stage config, leaving unspecified fields at their default.
 
@@ -297,6 +307,9 @@ def stage_config(
     if waypoint_capture_width is not None:
         episode = replace(episode, waypoint_capture_width=waypoint_capture_width)
     config = replace(config, episode=episode)
+    obstacles = config.obstacles
     if obstacles_enabled is not None:
-        config = replace(config, obstacles=replace(config.obstacles, enabled=obstacles_enabled))
-    return config
+        obstacles = replace(obstacles, enabled=obstacles_enabled)
+    if obstacles_randomized is not None:
+        obstacles = replace(obstacles, randomize=obstacles_randomized)
+    return replace(config, obstacles=obstacles)

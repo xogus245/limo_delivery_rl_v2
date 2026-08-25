@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Consecutive in-radius steps required to arrive (1 = no dwell).",
     )
     stage.add_argument(
+        "--randomize-obstacles",
+        action="store_true",
+        help="Resample the obstacle pose every episode (forces both turn directions).",
+    )
+    stage.add_argument(
         "--waypoint-capture-width",
         type=float,
         default=defaults.episode.waypoint_capture_width,
@@ -96,6 +101,7 @@ def build_stage_config(args) -> DeliveryEnvConfig:
         waypoint_radius=args.waypoint_radius,
         waypoint_hold_steps=args.waypoint_hold_steps,
         waypoint_capture_width=args.waypoint_capture_width,
+        obstacles_randomized=args.randomize_obstacles,
     )
 
 
@@ -124,6 +130,7 @@ def main() -> None:
         f"radius={config.episode.waypoint_radius} "
         f"hold={config.episode.waypoint_hold_steps} "
         f"capture_width={config.episode.waypoint_capture_width} "
+        f"random_obstacles={config.obstacles.randomize} "
         f"resume={args.resume or 'none'}",
         flush=True,
     )

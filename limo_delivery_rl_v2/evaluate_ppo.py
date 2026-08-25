@@ -117,6 +117,7 @@ def main() -> None:
         type=float,
         default=defaults.episode.waypoint_capture_width,
     )
+    parser.add_argument("--randomize-obstacles", action="store_true")
     parser.add_argument("--json-out", type=Path, default=Path("runs/limo_delivery_rl_v2/eval.json"))
     parser.add_argument("--csv-out", type=Path, default=Path("runs/limo_delivery_rl_v2/eval.csv"))
     args = parser.parse_args()
@@ -128,6 +129,7 @@ def main() -> None:
         waypoint_radius=args.waypoint_radius,
         waypoint_hold_steps=args.waypoint_hold_steps,
         waypoint_capture_width=args.waypoint_capture_width,
+        obstacles_randomized=args.randomize_obstacles,
     )
     env = LimoWaypointRLEnv(config=config, enable_ros=not args.no_ros)
     model = PPO.load(args.model_path, env=env, device="cpu")

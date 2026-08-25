@@ -28,7 +28,13 @@ from limo_delivery_rl_v2.observation import (
 from limo_delivery_rl_v2.path_tracker import PathTracker, path_length
 from limo_delivery_rl_v2.reward import RewardContext, compute_reward
 from limo_delivery_rl_v2.safety_controller import apply_safety_limits
-from limo_delivery_rl_v2.state import DeliveryEnvConfig, SafetyMode, StopReason, observation_dim
+from limo_delivery_rl_v2.state import (
+    DeliveryEnvConfig,
+    ObstacleSpec,
+    SafetyMode,
+    StopReason,
+    observation_dim,
+)
 from limo_delivery_rl_v2.termination import TerminationContext, termination_status
 from limo_delivery_rl_v2.waypoint_manager import WaypointManager
 
@@ -79,6 +85,7 @@ class LimoWaypointRLEnv(gym.Env):
         self._sensor_lost_steps = 0
         self._path_available = False
         self._stop_reason = StopReason.NONE
+        self.episode_obstacles: tuple[ObstacleSpec, ...] = ()
 
     # ------------------------------------------------------------------ setup
 
@@ -104,6 +111,29 @@ class LimoWaypointRLEnv(gym.Env):
             scan_age=float("inf"),
             odom_age=float("inf"),
             tf_age=float("inf"),
+        )
+
+    def _sample_obstacles(self) -> tuple[ObstacleSpec, ...]:
+        """Draw this episode's obstacle poses.
+
+        Randomised poses stay inside ranges verified free in ``map.pgm``, and
+        every one of them blocks the path centreline, so the policy has to pick
+        a side from ``/scan`` instead of memorising one turn direction.
+        """
+        obstacles = self.config.obstacles
+        if not obstacles.enabled:
+            return ()
+        if not obstacles.randomize:
+            return obstacles.specs
+        from dataclasses import replace
+
+        return tuple(
+            replace(
+                spec,
+                x=float(self.np_random.uniform(*obstacles.x_range)),
+                y=float(self.np_random.uniform(*obstacles.y_range)),
+            )
+            for spec in obstacles.specs
         )
 
     def _sample_start_pose(self) -> tuple[float, float, float]:
@@ -132,7 +162,10 @@ class LimoWaypointRLEnv(gym.Env):
         self._stop_reason = StopReason.NONE
         self.waypoint_manager.reset(start_xy=(start_pose[0], start_pose[1]))
 
-        path, frame = self._backend.reset_episode(start_pose, self.config.waypoints)
+        self.episode_obstacles = self._sample_obstacles()
+        path, frame = self._backend.reset_episode(
+            start_pose, self.config.waypoints, self.episode_obstacles
+        )
         self._frame = frame
         if frame.pose is None:
             raise RuntimeError(

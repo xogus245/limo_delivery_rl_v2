@@ -17,7 +17,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from limo_delivery_rl_v2.geometry import Pose2D
-from limo_delivery_rl_v2.state import DeliveryEnvConfig
+from limo_delivery_rl_v2.state import DeliveryEnvConfig, ObstacleSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,8 +44,9 @@ class EnvBackend(Protocol):
         self,
         start_pose: tuple[float, float, float],
         waypoints: Sequence[tuple[float, float, float]],
+        obstacles: Sequence[ObstacleSpec],
     ) -> tuple[tuple[tuple[float, float], ...], BackendFrame]:
-        """Reset the robot, plan the global path and return ``(path, first_frame)``."""
+        """Reset the robot, plan the path and spawn ``obstacles`` afterwards."""
 
     def apply_command(self, linear: float, angular: float) -> BackendFrame:
         """Publish one command and return the resulting frame one control step later."""
@@ -100,8 +101,14 @@ class OfflineBackend:
         self,
         start_pose: tuple[float, float, float],
         waypoints: Sequence[tuple[float, float, float]],
+        obstacles: Sequence[ObstacleSpec] = (),
     ) -> tuple[tuple[tuple[float, float], ...], BackendFrame]:
-        """Teleport the robot and return a straight-line stand-in for the Nav2 path."""
+        """Teleport the robot and return a straight-line stand-in for the Nav2 path.
+
+        Obstacles are accepted for interface parity; the offline LiDAR always
+        reports free space.
+        """
+        self._obstacles = tuple(obstacles)
         self._pose = Pose2D(*start_pose)
         self._linear = 0.0
         self._angular = 0.0

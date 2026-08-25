@@ -35,6 +35,9 @@ class EpisodeMetricCallback(BaseCallback):
         self.print_every_episodes = max(int(print_every_episodes), 0)
         self.episode_count = 0
         self.reason_counts: dict[str, int] = {reason.value: 0 for reason in COUNTED_REASONS}
+        # Keyed by the direction the robot had to avoid towards: obstacle right
+        # of the path (y < 0) forces a left pass, and vice versa.
+        self.avoidance_counts: dict[str, list[int]] = {"left": [0, 0], "right": [0, 0]}
 
     def _on_step(self) -> bool:
         """Fold every finished episode in this step into the logger."""
@@ -79,9 +82,37 @@ class EpisodeMetricCallback(BaseCallback):
             value = summary.get(f"reward_{term}")
             if isinstance(value, (int, float)):
                 self.logger.record_mean(f"reward/{term}", float(value))
+        self._record_avoidance(summary, reason)
 
         if self.print_every_episodes and self.episode_count % self.print_every_episodes == 0:
             self._print_progress(summary, reason)
+
+    def _record_avoidance(self, summary: Mapping[str, float | str], reason: str) -> None:
+        """Split the success rate by which side the obstacle forced the robot around.
+
+        A policy that memorised one turn direction shows a wide gap between the
+        two; a policy actually reading the LiDAR shows them converge.
+        """
+        obstacle_y = summary.get("obstacle_y")
+        if not isinstance(obstacle_y, (int, float)) or obstacle_y == 0.0:
+            return
+        side = "left" if obstacle_y < 0.0 else "right"
+        totals = self.avoidance_counts[side]
+        totals[0] += 1
+        totals[1] += int(reason == StopReason.SUCCESS.value)
+        for name, (episodes, successes) in self.avoidance_counts.items():
+            if episodes:
+                self.logger.record(f"episode/avoid_{name}_count", episodes)
+                self.logger.record(f"episode/avoid_{name}_success_rate", successes / episodes)
+
+    def _avoidance_text(self) -> str:
+        """Render the per-side success rates for the console line."""
+        parts = [
+            f"{name[0].upper()}={successes / episodes:.0%}({episodes})"
+            for name, (episodes, successes) in self.avoidance_counts.items()
+            if episodes
+        ]
+        return " | " + " ".join(parts) if parts else ""
 
     def _print_progress(self, summary: Mapping[str, float | str], reason: str) -> None:
         """Print a one-line human-readable progress update."""
@@ -94,6 +125,7 @@ class EpisodeMetricCallback(BaseCallback):
             f" | waypoints={summary.get('waypoints_reached', 0)}"
             f" | reward={float(summary.get('total_reward', 0.0)):.2f}"
             f" | success_rate={success_rate:.1f}%"
+            f"{self._avoidance_text()}"
             f" | timestep={self.num_timesteps:,}",
             flush=True,
         )

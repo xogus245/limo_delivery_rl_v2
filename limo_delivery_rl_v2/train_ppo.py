@@ -139,7 +139,7 @@ def main() -> None:
             CheckpointCallback(
                 save_freq=args.checkpoint_freq,
                 save_path=str(args.checkpoint_dir),
-                name_prefix="ppo_waypoint",
+                name_prefix=args.tb_log_name,
             ),
             EpisodeMetricCallback(print_every_episodes=args.progress_every_episodes),
         ]
@@ -169,9 +169,16 @@ def main() -> None:
             **hyperparameters,
         )
     try:
-        model.learn(total_timesteps=args.total_timesteps, callback=callback, tb_log_name=args.tb_log_name)
-        model.save(args.save_path)
+        model.learn(
+            total_timesteps=args.total_timesteps, callback=callback, tb_log_name=args.tb_log_name
+        )
+    except KeyboardInterrupt:
+        # Stages are iterated on constantly; an interrupted run must still leave a
+        # resumable policy behind instead of discarding every step it took.
+        print("\n[중단] 학습을 중단하고 현재 정책을 저장합니다.", flush=True)
     finally:
+        model.save(args.save_path)
+        print(f"[저장] {args.save_path}", flush=True)
         env.close()
 
 

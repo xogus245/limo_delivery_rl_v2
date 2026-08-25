@@ -320,3 +320,102 @@ def test_the_randomise_flag_reaches_the_stage_config():
 
     assert build_stage_config(args).obstacles.randomize is True
     assert build_stage_config(build_parser().parse_args([])).obstacles.randomize is False
+
+
+# --------------------------------------------- per-side avoidance reporting
+
+
+def test_episode_summary_reports_the_obstacle_the_robot_had_to_pass():
+    env = LimoWaypointRLEnv(
+        config=stage_config(waypoint_count=1, obstacles_randomized=True), enable_ros=False
+    )
+    env.reset(seed=3)
+    expected = env.episode_obstacles[0]
+
+    info = {}
+    for _ in range(2000):
+        _o, _r, terminated, truncated, info = env.step(np.array([1.0, 0.0], dtype=np.float32))
+        if terminated or truncated:
+            break
+
+    summary = info["episode_summary"]
+    assert summary["obstacle_x"] == pytest.approx(expected.x)
+    assert summary["obstacle_y"] == pytest.approx(expected.y)
+    env.close()
+
+
+def test_summary_omits_obstacle_fields_when_none_are_spawned():
+    env = LimoWaypointRLEnv(
+        config=stage_config(waypoint_count=1, obstacles_enabled=False), enable_ros=False
+    )
+    env.reset(seed=3)
+
+    info = {}
+    for _ in range(2000):
+        _o, _r, terminated, truncated, info = env.step(np.array([1.0, 0.0], dtype=np.float32))
+        if terminated or truncated:
+            break
+
+    assert "obstacle_y" not in info["episode_summary"]
+    env.close()
+
+
+def test_callback_splits_the_success_rate_by_avoidance_side():
+    from limo_delivery_rl_v2.tb_callback import EpisodeMetricCallback
+
+    class _Logger:
+        def __init__(self):
+            self.values = {}
+
+        def record(self, key, value, exclude=None):
+            self.values[key] = value
+
+        record_mean = record
+
+    class _Model:
+        def __init__(self):
+            self.logger = _Logger()
+            self.num_timesteps = 0
+
+    callback = EpisodeMetricCallback()
+    callback.model = _Model()
+
+    # Obstacle right of the path (y<0) -> must pass left: 2 of 2 succeed.
+    # Obstacle left  of the path (y>0) -> must pass right: 1 of 3 succeeds.
+    episodes = [
+        (-0.15, StopReason.SUCCESS), (-0.10, StopReason.SUCCESS),
+        (0.15, StopReason.SUCCESS), (0.10, StopReason.COLLISION),
+        (0.18, StopReason.COLLISION),
+    ]
+    for obstacle_y, reason in episodes:
+        summary = {"reason": reason.value, "obstacle_y": obstacle_y, "obstacle_x": 2.0}
+        callback.locals = {"dones": [True], "infos": [{"episode_summary": summary}]}
+        callback._on_step()
+
+    values = callback.model.logger.values
+    assert values["episode/avoid_left_count"] == 2
+    assert values["episode/avoid_left_success_rate"] == pytest.approx(1.0)
+    assert values["episode/avoid_right_count"] == 3
+    assert values["episode/avoid_right_success_rate"] == pytest.approx(1 / 3)
+
+
+def test_callback_ignores_the_split_when_obstacles_are_absent():
+    from limo_delivery_rl_v2.tb_callback import EpisodeMetricCallback
+
+    class _Logger:
+        def __init__(self):
+            self.values = {}
+
+        def record(self, key, value, exclude=None):
+            self.values[key] = value
+
+        record_mean = record
+
+    callback = EpisodeMetricCallback()
+    callback.model = type("M", (), {"logger": _Logger(), "num_timesteps": 0})()
+    callback.locals = {
+        "dones": [True], "infos": [{"episode_summary": {"reason": StopReason.SUCCESS.value}}]
+    }
+    callback._on_step()
+
+    assert not any("avoid_" in key for key in callback.model.logger.values)

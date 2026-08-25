@@ -290,7 +290,15 @@ class LimoWaypointRLEnv(gym.Env):
         }
         info.update({f"reward/{name}": value for name, value in terms.items()})
         if terminated or truncated:
-            info["episode_summary"] = self.metrics.summary(self._stop_reason)
+            summary = self.metrics.summary(self._stop_reason)
+            if self.episode_obstacles:
+                # The sign of y says which way the robot had to go, which is what
+                # separates genuine LiDAR-conditioned avoidance from a memorised
+                # one-way reflex.
+                nearest = min(self.episode_obstacles, key=lambda spec: spec.x)
+                summary["obstacle_x"] = nearest.x
+                summary["obstacle_y"] = nearest.y
+            info["episode_summary"] = summary
         return self._get_obs(), reward, terminated, truncated, info
 
     def close(self) -> None:

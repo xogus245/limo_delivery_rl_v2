@@ -1,0 +1,18 @@
+# Training output: checkpoints, TensorBoard events, evaluation reports
+runs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# colcon
+build/
+install/
+log/
+
+# Editors / OS
+.vscode/
+*.swp
+*:Zone.Identifier

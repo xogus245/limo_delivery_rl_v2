@@ -1,0 +1,10 @@
+{
+  "include": ["limo_delivery_rl_v2", "test"],
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": ["."]
+    }
+  ],
+  "typeCheckingMode": "basic"
+}

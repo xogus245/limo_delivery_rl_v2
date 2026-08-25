@@ -37,6 +37,10 @@ class WaypointManager:
         """Store the waypoint list and the arrival radius / hold requirement."""
         if not waypoints:
             raise ValueError("at least one waypoint is required")
+        if config.waypoint_hold_steps < 1:
+            # A hold of 0 would satisfy `hold >= required` on the very first step,
+            # marking a waypoint reached from anywhere on the map.
+            raise ValueError("waypoint_hold_steps must be at least 1")
         self._waypoints = tuple((float(x), float(y), float(yaw)) for x, y, yaw in waypoints)
         self._config = config
         self._index = 0

@@ -48,13 +48,19 @@ def test_stage_config_can_disable_obstacles_for_a_warmup_stage():
 
 def test_training_arguments_map_onto_the_stage_config():
     args = build_parser().parse_args(
-        ["--waypoints", "1", "--waypoint-radius", "0.9", "--waypoint-capture-width", "1.0"]
+        [
+            "--waypoints", "1",
+            "--waypoint-radius", "0.9",
+            "--waypoint-hold-steps", "1",
+            "--waypoint-capture-width", "1.0",
+        ]
     )
 
     config = build_stage_config(args)
 
     assert config.waypoints == WAYPOINTS[:1]
     assert config.episode.waypoint_radius == pytest.approx(0.9)
+    assert config.episode.waypoint_hold_steps == 1
     assert config.episode.waypoint_capture_width == pytest.approx(1.0)
 
 
@@ -186,3 +192,57 @@ def test_a_shorter_stage_reaches_success_far_sooner():
         env.close()
 
     assert lengths[1] < lengths[3] / 2
+
+
+# ------------------------------------------------------------- dwell removal
+
+
+def test_a_hold_of_one_arrives_on_the_first_in_radius_step():
+    """No dwell: entering the radius is arrival, so the robot never parks."""
+    instance = WaypointManager(
+        WAYPOINTS[:1], EpisodeConfig(waypoint_hold_steps=1)
+    )
+    instance.reset(start_xy=(0.0, 0.0))
+
+    assert not instance.update(Pose2D(2.0, 0.0, 0.0)).reached      # outside 0.60 m
+    update = instance.update(Pose2D(2.5, 0.0, 0.0))                 # inside
+    assert update.reached
+    assert update.bonus_granted
+
+
+def test_a_hold_of_one_still_requires_being_inside_the_radius():
+    instance = WaypointManager(WAYPOINTS[:1], EpisodeConfig(waypoint_hold_steps=1))
+    instance.reset(start_xy=(0.0, 0.0))
+
+    for x in (0.0, 1.0, 2.0, 2.39):
+        assert not instance.update(Pose2D(x, 0.0, 0.0)).reached
+    assert not instance.completed
+
+
+def test_a_zero_hold_is_rejected_rather_than_arriving_from_anywhere():
+    with pytest.raises(ValueError, match="waypoint_hold_steps"):
+        WaypointManager(WAYPOINTS[:1], EpisodeConfig(waypoint_hold_steps=0))
+
+
+def test_the_specification_default_still_requires_five_steps():
+    assert EpisodeConfig().waypoint_hold_steps == 5
+
+
+def test_no_dwell_stage_finishes_sooner_than_the_dwelling_default():
+    lengths = {}
+    for hold in (1, 5):
+        env = LimoWaypointRLEnv(
+            config=stage_config(waypoint_count=3, waypoint_hold_steps=hold), enable_ros=False
+        )
+        env.reset(seed=42)
+        steps = 0
+        for _ in range(4000):
+            _o, _r, terminated, truncated, info = env.step(np.array([1.0, 0.0], dtype=np.float32))
+            steps += 1
+            if terminated or truncated:
+                break
+        assert info["reason"] == StopReason.SUCCESS.value
+        lengths[hold] = steps
+        env.close()
+
+    assert lengths[1] <= lengths[5]

@@ -70,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Arrival radius in metres.",
     )
     stage.add_argument(
+        "--waypoint-hold-steps",
+        type=int,
+        default=defaults.episode.waypoint_hold_steps,
+        help="Consecutive in-radius steps required to arrive (1 = no dwell).",
+    )
+    stage.add_argument(
         "--waypoint-capture-width",
         type=float,
         default=defaults.episode.waypoint_capture_width,
@@ -88,6 +94,7 @@ def build_stage_config(args) -> DeliveryEnvConfig:
     return stage_config(
         waypoint_count=args.waypoints,
         waypoint_radius=args.waypoint_radius,
+        waypoint_hold_steps=args.waypoint_hold_steps,
         waypoint_capture_width=args.waypoint_capture_width,
     )
 
@@ -115,6 +122,7 @@ def main() -> None:
     print(
         f"[stage] waypoints={len(config.waypoints)} "
         f"radius={config.episode.waypoint_radius} "
+        f"hold={config.episode.waypoint_hold_steps} "
         f"capture_width={config.episode.waypoint_capture_width} "
         f"resume={args.resume or 'none'}",
         flush=True,

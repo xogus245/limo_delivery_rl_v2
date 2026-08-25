@@ -270,6 +270,7 @@ def stage_config(
     *,
     waypoint_count: int | None = None,
     waypoint_radius: float | None = None,
+    waypoint_hold_steps: int | None = None,
     waypoint_capture_width: float | None = None,
     obstacles_enabled: bool | None = None,
 ) -> DeliveryEnvConfig:
@@ -291,6 +292,8 @@ def stage_config(
     episode = config.episode
     if waypoint_radius is not None:
         episode = replace(episode, waypoint_radius=waypoint_radius)
+    if waypoint_hold_steps is not None:
+        episode = replace(episode, waypoint_hold_steps=waypoint_hold_steps)
     if waypoint_capture_width is not None:
         episode = replace(episode, waypoint_capture_width=waypoint_capture_width)
     config = replace(config, episode=episode)

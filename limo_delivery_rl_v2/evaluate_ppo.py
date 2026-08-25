@@ -110,6 +110,9 @@ def main() -> None:
     )
     parser.add_argument("--waypoint-radius", type=float, default=defaults.episode.waypoint_radius)
     parser.add_argument(
+        "--waypoint-hold-steps", type=int, default=defaults.episode.waypoint_hold_steps
+    )
+    parser.add_argument(
         "--waypoint-capture-width",
         type=float,
         default=defaults.episode.waypoint_capture_width,
@@ -123,6 +126,7 @@ def main() -> None:
     config = stage_config(
         waypoint_count=args.waypoints,
         waypoint_radius=args.waypoint_radius,
+        waypoint_hold_steps=args.waypoint_hold_steps,
         waypoint_capture_width=args.waypoint_capture_width,
     )
     env = LimoWaypointRLEnv(config=config, enable_ros=not args.no_ros)

@@ -377,10 +377,14 @@ source install/setup.bash
 
 | 단계 | 경유지 | 도달 판정 | 목표 | 전환 기준 |
 |---|---|---|---|---|
-| A | 1개 (3.0) | 반경 0.9 + 통과 평면 1.0 | 장애물 회피 | 성공률 ~70% |
-| B | 1개 (3.0) | 반경 0.60 + 5 step (스펙) | 정밀 도달 | 성공률 ~70% |
-| C | 2개 (3.0, 6.0) | 스펙 | 연속 전환 | 성공률 ~60% |
-| D | 3개 (3.0, 6.0, 9.5) | 스펙 | 최종 | — |
+| A | 1개 (3.0) | 반경 0.9, hold 1, 통과 평면 1.0 | 장애물 회피 | 성공률 ~70% |
+| B | 1개 (3.0) | 반경 0.60, hold 1 | 정밀 도달 | 성공률 ~70% |
+| C | 2개 (3.0, 6.0) | 반경 0.60, hold 1 | 연속 전환 | 성공률 ~60% |
+| D | 3개 (3.0, 6.0, 9.5) | 반경 0.60, hold 1 | 최종 | — |
+
+`--waypoint-hold-steps 1`은 체류(dwell)를 없앤다. 스펙 기본값 5 step은 경유지에
+0.25초 머물기를 요구하는데, 이는 "통과해서 계속 가기"와 상충하고 통과 속도를 깎는다.
+`0`은 반경 밖에서도 도달로 판정되므로 거부된다 (최소 1).
 
 A단계를 90%까지 밀지 말 것. 경유지 1개에서 "도착해서 멈추기"를 과학습하면
 C·D단계의 "통과해서 계속 가기"와 충돌한다.
@@ -388,25 +392,25 @@ C·D단계의 "통과해서 계속 가기"와 충돌한다.
 ```bash
 # A: 장애물 회피 (성공 보상이 9.5 m가 아니라 3 m 앞에 있다)
 ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
-  --waypoints 1 --waypoint-radius 0.9 --waypoint-capture-width 1.0 \
+  --waypoints 1 --waypoint-radius 0.9 --waypoint-hold-steps 1 --waypoint-capture-width 1.0 \
   --total-timesteps 200000 --log-std-init -1.5 \
   --save-path runs/limo_delivery_rl_v2/stage_a --tb-log-name stage_a
 
 # B: 도달 판정을 스펙대로 조인다
 ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
-  --waypoints 1 --resume runs/limo_delivery_rl_v2/stage_a.zip \
+  --waypoints 1 --waypoint-hold-steps 1 --resume runs/limo_delivery_rl_v2/stage_a.zip \
   --total-timesteps 150000 \
   --save-path runs/limo_delivery_rl_v2/stage_b --tb-log-name stage_b
 
 # C: 경유지 2개
 ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
-  --waypoints 2 --resume runs/limo_delivery_rl_v2/stage_b.zip \
+  --waypoints 2 --waypoint-hold-steps 1 --resume runs/limo_delivery_rl_v2/stage_b.zip \
   --total-timesteps 200000 \
   --save-path runs/limo_delivery_rl_v2/stage_c --tb-log-name stage_c
 
 # D: 전체
 ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
-  --waypoints 3 --resume runs/limo_delivery_rl_v2/stage_c.zip \
+  --waypoints 3 --waypoint-hold-steps 1 --resume runs/limo_delivery_rl_v2/stage_c.zip \
   --total-timesteps 500000 \
   --save-path runs/limo_delivery_rl_v2/final_model --tb-log-name stage_d
 ```
@@ -416,7 +420,7 @@ ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
 ```bash
 ros2 run limo_delivery_rl_v2 delivery_v2_eval_ppo \
   runs/limo_delivery_rl_v2/stage_a.zip --waypoints 1 --waypoint-radius 0.9 \
-  --waypoint-capture-width 1.0 --episodes 20
+  --waypoint-hold-steps 1 --waypoint-capture-width 1.0 --episodes 20
 ```
 
 ### 통과 평면 판정

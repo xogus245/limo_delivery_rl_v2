@@ -6,6 +6,7 @@ controller server, which would publish a competing ``/cmd_vel``.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -43,14 +44,21 @@ class WaypointManager:
         self._reached_count = 0
         self._rewarded: set[int] = set()
         self._completed = False
+        self._origin = (self._waypoints[0][0], self._waypoints[0][1])
 
-    def reset(self) -> None:
-        """Return the manager to the first waypoint."""
+    def reset(self, start_xy: tuple[float, float] | None = None) -> None:
+        """Return the manager to the first waypoint.
+
+        ``start_xy`` anchors the approach direction of the first waypoint, which
+        the plane-crossing capture test needs.
+        """
         self._index = 0
         self._hold_steps = 0
         self._reached_count = 0
         self._rewarded.clear()
         self._completed = False
+        if start_xy is not None:
+            self._origin = (float(start_xy[0]), float(start_xy[1]))
 
     @property
     def waypoints(self) -> tuple[tuple[float, float, float], ...]:
@@ -87,12 +95,42 @@ class WaypointManager:
         target = (self.current[0], self.current[1])
         return euclidean((pose.x, pose.y), target), heading_error_to(target, pose)
 
+    def approach_origin(self) -> tuple[float, float]:
+        """Point the current waypoint is approached from: the previous one, or the start."""
+        if self._index == 0:
+            return self._origin
+        previous = self._waypoints[self._index - 1]
+        return (previous[0], previous[1])
+
+    def has_driven_past(self, pose: Pose2D) -> bool:
+        """Whether the robot crossed the current waypoint's plane inside the capture band.
+
+        The radius test alone silently misses a waypoint the robot drove past
+        off-centre -- it simply never enters the circle, so the episode runs on.
+        This catches that case without widening the radius for a centred pass.
+        """
+        width = self._config.waypoint_capture_width
+        if width <= 0.0:
+            return False
+        origin_x, origin_y = self.approach_origin()
+        target = self.current
+        dx, dy = target[0] - origin_x, target[1] - origin_y
+        length = math.hypot(dx, dy)
+        if length <= 1e-9:
+            return False
+        unit_x, unit_y = dx / length, dy / length
+        offset_x, offset_y = pose.x - target[0], pose.y - target[1]
+        along = offset_x * unit_x + offset_y * unit_y
+        lateral = abs(-offset_x * unit_y + offset_y * unit_x)
+        return along > 0.0 and lateral <= width
+
     def update(self, pose: Pose2D) -> WaypointUpdate:
         """Advance the state machine.
 
-        A waypoint counts as reached only after the robot has stayed inside the
-        radius for ``waypoint_hold_steps`` consecutive steps, and its bonus is
-        granted exactly once.
+        A waypoint counts as reached once the robot has stayed inside the radius
+        for ``waypoint_hold_steps`` consecutive steps, or -- when a capture band
+        is configured -- once it has driven past the waypoint's plane. Its bonus
+        is granted exactly once either way.
         """
         distance, heading_error = self.measure(pose)
         if self._completed:
@@ -103,7 +141,8 @@ class WaypointManager:
         else:
             self._hold_steps = 0
 
-        if self._hold_steps < self._config.waypoint_hold_steps:
+        held = self._hold_steps >= self._config.waypoint_hold_steps
+        if not held and not self.has_driven_past(pose):
             return WaypointUpdate(distance, heading_error, False, False, False, False)
 
         bonus_granted = self._index not in self._rewarded

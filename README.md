@@ -367,19 +367,91 @@ source install/setup.bash
 
 ---
 
-## 9. 학습 단계
+## 9. 학습 커리큘럼
 
-1. 장애물 없는 경로 추종 (`ObstacleConfig.enabled = False`)
-2. 현재 고정 장애물 1개 `(2.07, -0.18)`
+관측 112차원에 경유지 *개수*가 들어가지 않는다 — "다음 경유지까지 거리/heading" 2개뿐이다.
+따라서 경유지 1개로 배운 정책이 2개·3개 환경에 그대로 load된다. `--resume`으로 단계를
+이어붙이는 것이 이 설계의 전제다.
+
+### 경유지 단계
+
+| 단계 | 경유지 | 도달 판정 | 목표 | 전환 기준 |
+|---|---|---|---|---|
+| A | 1개 (3.0) | 반경 0.9 + 통과 평면 1.0 | 장애물 회피 | 성공률 ~70% |
+| B | 1개 (3.0) | 반경 0.60 + 5 step (스펙) | 정밀 도달 | 성공률 ~70% |
+| C | 2개 (3.0, 6.0) | 스펙 | 연속 전환 | 성공률 ~60% |
+| D | 3개 (3.0, 6.0, 9.5) | 스펙 | 최종 | — |
+
+A단계를 90%까지 밀지 말 것. 경유지 1개에서 "도착해서 멈추기"를 과학습하면
+C·D단계의 "통과해서 계속 가기"와 충돌한다.
+
+```bash
+# A: 장애물 회피 (성공 보상이 9.5 m가 아니라 3 m 앞에 있다)
+ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
+  --waypoints 1 --waypoint-radius 0.9 --waypoint-capture-width 1.0 \
+  --total-timesteps 200000 --log-std-init -1.5 \
+  --save-path runs/limo_delivery_rl_v2/stage_a --tb-log-name stage_a
+
+# B: 도달 판정을 스펙대로 조인다
+ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
+  --waypoints 1 --resume runs/limo_delivery_rl_v2/stage_a.zip \
+  --total-timesteps 150000 \
+  --save-path runs/limo_delivery_rl_v2/stage_b --tb-log-name stage_b
+
+# C: 경유지 2개
+ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
+  --waypoints 2 --resume runs/limo_delivery_rl_v2/stage_b.zip \
+  --total-timesteps 200000 \
+  --save-path runs/limo_delivery_rl_v2/stage_c --tb-log-name stage_c
+
+# D: 전체
+ros2 run limo_delivery_rl_v2 delivery_v2_train_ppo \
+  --waypoints 3 --resume runs/limo_delivery_rl_v2/stage_c.zip \
+  --total-timesteps 500000 \
+  --save-path runs/limo_delivery_rl_v2/final_model --tb-log-name stage_d
+```
+
+평가할 때는 학습한 단계와 같은 인자를 준다.
+
+```bash
+ros2 run limo_delivery_rl_v2 delivery_v2_eval_ppo \
+  runs/limo_delivery_rl_v2/stage_a.zip --waypoints 1 --waypoint-radius 0.9 \
+  --waypoint-capture-width 1.0 --episodes 20
+```
+
+### 통과 평면 판정
+
+반경 판정만으로는 **경유지 옆을 반경 밖으로 스쳐 지나간 경우를 영영 못 잡는다.**
+원 안에 한 번도 안 들어오므로 도달 판정이 나지 않고 에피소드가 계속 달린다.
+`--waypoint-capture-width W`를 주면 다음 조건이 OR로 추가된다.
+
+```
+(로봇 - 경유지) · 진행방향 > 0   AND   |측면 오차| <= W
+```
+
+진행방향은 이전 경유지(첫 경유지는 시작 pose)에서 현재 경유지로 향하는 방향이다.
+기본값 `0.0`은 이 판정을 끄고 스펙의 반경 + 5 step 규칙만 남긴다.
+
+### 장애물 단계
+
+1. 장애물 없는 경로 추종 (`ObstacleConfig.enabled = False`) — 경로 추종이 이미 되면 생략 가능
+2. 고정 장애물 1개 `(2.07, -0.18)`
 3. 검증된 free-space 내 정적 장애물 위치 랜덤화
 4. 정적 장애물 다수
 5. 동적 장애물 추가 — **이동 구간과 속도는 아직 미정이다.**
-   3단계까지 성공한 뒤 사용자에게 시작점 · 종료점 · 속도를 확인하고 진행한다.
+   3단계가 성공한 뒤 시작점 · 종료점 · 속도를 확정하고 진행한다.
 
-참고: 경유지 구간(`x ∈ [0, 12]`)의 충돌 없는 y 범위는 대략 `[-1.4, +1.05]` m다
+현재 장애물의 기하는 다음과 같다. 중심선 직진은 약 3 cm 물리적으로 겹치므로
+회피가 필수다.
+
+| | |
+|---|---|
+| 장애물 | x ∈ [1.945, 2.195], y ∈ [-0.305, -0.055] |
+| 로봇 폭 (바퀴 포함) | y ∈ [-0.0875, +0.0875] |
+| 0.25 m 여유 통과에 필요한 횡변위 | 중심 y ≈ +0.2 |
+
+경유지 구간(`x ∈ [0, 12]`)의 충돌 없는 y 범위는 대략 `[-1.4, +1.05]` m다
 (`map.pgm` 실측). 이 범위 밖에 장애물을 두면 안 된다.
-
----
 
 ## 10. 기존 체크포인트 / v1 잔재
 

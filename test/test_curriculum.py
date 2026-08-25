@@ -1,0 +1,188 @@
+"""Curriculum stages: waypoint subsets, plane-crossing capture, policy transfer."""
+
+import numpy as np
+import pytest
+
+from limo_delivery_rl_v2.delivery_env import LimoWaypointRLEnv
+from limo_delivery_rl_v2.geometry import Pose2D
+from limo_delivery_rl_v2.state import (
+    WAYPOINTS,
+    DeliveryEnvConfig,
+    EpisodeConfig,
+    StopReason,
+    observation_dim,
+    stage_config,
+)
+from limo_delivery_rl_v2.train_ppo import build_parser, build_stage_config
+from limo_delivery_rl_v2.waypoint_manager import WaypointManager
+
+# --------------------------------------------------------------- stage config
+
+
+def test_default_stage_config_is_unchanged():
+    config = stage_config()
+    base = DeliveryEnvConfig()
+
+    assert config.waypoints == base.waypoints
+    assert config.episode.waypoint_radius == base.episode.waypoint_radius
+    assert config.episode.waypoint_capture_width == 0.0
+
+
+@pytest.mark.parametrize("count", [1, 2, 3])
+def test_stage_config_takes_the_first_n_waypoints_in_order(count):
+    config = stage_config(waypoint_count=count)
+
+    assert config.waypoints == WAYPOINTS[:count]
+
+
+def test_stage_config_rejects_an_out_of_range_waypoint_count():
+    for bad in (0, -1, 4):
+        with pytest.raises(ValueError, match="waypoint_count"):
+            stage_config(waypoint_count=bad)
+
+
+def test_stage_config_can_disable_obstacles_for_a_warmup_stage():
+    assert stage_config(obstacles_enabled=False).obstacles.enabled is False
+    assert stage_config().obstacles.enabled is True
+
+
+def test_training_arguments_map_onto_the_stage_config():
+    args = build_parser().parse_args(
+        ["--waypoints", "1", "--waypoint-radius", "0.9", "--waypoint-capture-width", "1.0"]
+    )
+
+    config = build_stage_config(args)
+
+    assert config.waypoints == WAYPOINTS[:1]
+    assert config.episode.waypoint_radius == pytest.approx(0.9)
+    assert config.episode.waypoint_capture_width == pytest.approx(1.0)
+
+
+def test_training_defaults_leave_every_stage_knob_at_the_specification():
+    config = build_stage_config(build_parser().parse_args([]))
+
+    assert config == DeliveryEnvConfig()
+    assert build_parser().parse_args([]).resume is None
+
+
+# ------------------------------------------------------- plane-crossing capture
+
+
+def manager(width: float, count: int = 1) -> WaypointManager:
+    """A manager over the first ``count`` waypoints with the given capture width."""
+    instance = WaypointManager(
+        WAYPOINTS[:count], EpisodeConfig(waypoint_capture_width=width)
+    )
+    instance.reset(start_xy=(0.0, 0.0))
+    return instance
+
+
+def test_capture_is_disabled_by_default_so_the_specification_rule_stands():
+    instance = manager(width=0.0)
+
+    # 1.5 m past the waypoint, well outside the 0.60 m radius.
+    assert not instance.update(Pose2D(4.5, 0.0, 0.0)).reached
+    assert not instance.completed
+
+
+def test_an_off_centre_pass_is_missed_without_capture_and_caught_with_it():
+    #  Drives past x=3.0 at y=0.8: the 0.60 m radius is never entered.
+    fly_by = Pose2D(3.2, 0.8, 0.0)
+
+    assert not manager(width=0.0).update(fly_by).reached
+    assert manager(width=1.0).update(fly_by).reached
+
+
+def test_capture_requires_actually_crossing_the_waypoint_plane():
+    instance = manager(width=1.0)
+
+    # Still short of the waypoint, off to the side: not reached.
+    assert not instance.update(Pose2D(2.5, 0.8, 0.0)).reached
+    # Now past it.
+    assert instance.update(Pose2D(3.1, 0.8, 0.0)).reached
+
+
+def test_capture_band_bounds_how_far_off_course_still_counts():
+    assert manager(width=1.0).update(Pose2D(3.2, 0.9, 0.0)).reached
+    assert not manager(width=1.0).update(Pose2D(3.2, 1.5, 0.0)).reached
+
+
+def test_capture_grants_the_bonus_exactly_once():
+    instance = manager(width=1.0, count=1)
+    bonuses = sum(int(instance.update(Pose2D(3.2, 0.8, 0.0)).bonus_granted) for _ in range(20))
+
+    assert bonuses == 1
+
+
+def test_capture_direction_follows_the_previous_waypoint():
+    instance = manager(width=1.0, count=2)
+    for _ in range(EpisodeConfig().waypoint_hold_steps):
+        instance.update(Pose2D(3.0, 0.0, 0.0))
+    assert instance.index == 1
+
+    # Between waypoint 1 and 2 the approach direction is 3.0 -> 6.0, so a pose
+    # at x=4.0 has not crossed waypoint 2's plane.
+    assert not instance.update(Pose2D(4.0, 0.7, 0.0)).reached
+    assert instance.update(Pose2D(6.2, 0.7, 0.0)).reached
+
+
+def test_start_pose_anchors_the_first_waypoint_direction():
+    instance = WaypointManager(WAYPOINTS[:1], EpisodeConfig(waypoint_capture_width=1.0))
+    instance.reset(start_xy=(0.0, 0.0))
+
+    assert instance.approach_origin() == (0.0, 0.0)
+
+
+# -------------------------------------------------------------- stage transfer
+
+
+def test_every_stage_keeps_the_same_observation_and_action_shape():
+    """A policy can only carry across stages if the spaces never change."""
+    shapes = set()
+    for count in (1, 2, 3):
+        env = LimoWaypointRLEnv(config=stage_config(waypoint_count=count), enable_ros=False)
+        shapes.add((env.observation_space.shape, env.action_space.shape))
+        assert env.observation_space.shape == (observation_dim(env.config.observation),)
+        env.close()
+
+    assert shapes == {((112,), (2,))}
+
+
+def test_a_single_waypoint_stage_finishes_at_the_first_waypoint():
+    env = LimoWaypointRLEnv(config=stage_config(waypoint_count=1), enable_ros=False)
+    env.reset(seed=42)
+
+    info = {}
+    for _ in range(2000):
+        _obs, _reward, terminated, truncated, info = env.step(
+            np.array([1.0, 0.0], dtype=np.float32)
+        )
+        if terminated or truncated:
+            break
+
+    assert info["reason"] == StopReason.SUCCESS.value
+    summary = info["episode_summary"]
+    assert summary["waypoints_reached"] == 1.0
+    # One waypoint means one bonus and no switch discontinuity at all.
+    assert summary["reward_waypoint"] == pytest.approx(20.0)
+    assert summary["waypoint_switch_progress_sum"] == pytest.approx(0.0)
+    env.close()
+
+
+def test_a_shorter_stage_reaches_success_far_sooner():
+    """The point of stage 1: the +100 lands 3 m out instead of 9.5 m out."""
+    lengths = {}
+    for count in (1, 3):
+        env = LimoWaypointRLEnv(config=stage_config(waypoint_count=count), enable_ros=False)
+        env.reset(seed=42)
+        steps = 0
+        for _ in range(4000):
+            _o, _r, terminated, truncated, info = env.step(np.array([1.0, 0.0], dtype=np.float32))
+            steps += 1
+            if terminated or truncated:
+                break
+        assert info["reason"] == StopReason.SUCCESS.value
+        lengths[count] = steps
+        env.close()
+
+    assert lengths[1] < lengths[3] / 2

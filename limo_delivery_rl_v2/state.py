@@ -126,6 +126,11 @@ class EpisodeConfig:
 
     waypoint_radius: float = 0.60
     waypoint_hold_steps: int = 5
+    #: Half-width of the plane-crossing capture band, in metres. ``0.0`` disables
+    #: it, leaving the strict radius-and-hold rule the specification defines.
+    #: A positive value also accepts a waypoint the robot drove past off-centre,
+    #: which the radius rule alone misses entirely.
+    waypoint_capture_width: float = 0.0
     max_steps: int = 5000
     stuck_speed_threshold: float = 0.016
     stuck_step_limit: int = 300
@@ -258,3 +263,37 @@ def observation_dim(config: ObservationConfig) -> int:
         + 2  # measured linear + angular velocity
         + 2  # previous normalized action
     )
+
+
+def stage_config(
+    base: DeliveryEnvConfig | None = None,
+    *,
+    waypoint_count: int | None = None,
+    waypoint_radius: float | None = None,
+    waypoint_capture_width: float | None = None,
+    obstacles_enabled: bool | None = None,
+) -> DeliveryEnvConfig:
+    """Build a curriculum-stage config, leaving unspecified fields at their default.
+
+    Stages differ only in how many waypoints are active and how forgiving the
+    arrival test is; the observation layout is identical across stages, so a
+    policy trained on one stage loads directly into the next.
+    """
+    from dataclasses import replace
+
+    config = base or DeliveryEnvConfig()
+    if waypoint_count is not None:
+        if not 1 <= waypoint_count <= len(config.waypoints):
+            raise ValueError(
+                f"waypoint_count must be between 1 and {len(config.waypoints)}"
+            )
+        config = replace(config, waypoints=config.waypoints[:waypoint_count])
+    episode = config.episode
+    if waypoint_radius is not None:
+        episode = replace(episode, waypoint_radius=waypoint_radius)
+    if waypoint_capture_width is not None:
+        episode = replace(episode, waypoint_capture_width=waypoint_capture_width)
+    config = replace(config, episode=episode)
+    if obstacles_enabled is not None:
+        config = replace(config, obstacles=replace(config.obstacles, enabled=obstacles_enabled))
+    return config

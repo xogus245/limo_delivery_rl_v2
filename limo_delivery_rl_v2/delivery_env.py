@@ -130,7 +130,7 @@ class LimoWaypointRLEnv(gym.Env):
         self._previous_linear = 0.0
         self._previous_angular = 0.0
         self._stop_reason = StopReason.NONE
-        self.waypoint_manager.reset()
+        self.waypoint_manager.reset(start_xy=(start_pose[0], start_pose[1]))
 
         path, frame = self._backend.reset_episode(start_pose, self.config.waypoints)
         self._frame = frame

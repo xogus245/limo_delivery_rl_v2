@@ -13,7 +13,7 @@ from pathlib import Path
 os.environ.setdefault("RMW_IMPLEMENTATION", "rmw_cyclonedds_cpp")
 
 from limo_delivery_rl_v2.delivery_env import LimoWaypointRLEnv  # noqa: E402
-from limo_delivery_rl_v2.state import StopReason  # noqa: E402
+from limo_delivery_rl_v2.state import DeliveryEnvConfig, StopReason, stage_config  # noqa: E402
 
 #: Per-episode fields written to the CSV/JSON report.
 EPISODE_FIELDS: tuple[str, ...] = (
@@ -101,13 +101,31 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--stochastic", action="store_true", help="Sample instead of using the mean action.")
     parser.add_argument("--no-ros", action="store_true")
+    defaults = DeliveryEnvConfig()
+    parser.add_argument(
+        "--waypoints",
+        type=int,
+        default=len(defaults.waypoints),
+        help="Evaluate the stage that uses only the first N waypoints.",
+    )
+    parser.add_argument("--waypoint-radius", type=float, default=defaults.episode.waypoint_radius)
+    parser.add_argument(
+        "--waypoint-capture-width",
+        type=float,
+        default=defaults.episode.waypoint_capture_width,
+    )
     parser.add_argument("--json-out", type=Path, default=Path("runs/limo_delivery_rl_v2/eval.json"))
     parser.add_argument("--csv-out", type=Path, default=Path("runs/limo_delivery_rl_v2/eval.csv"))
     args = parser.parse_args()
 
     from stable_baselines3 import PPO
 
-    env = LimoWaypointRLEnv(enable_ros=not args.no_ros)
+    config = stage_config(
+        waypoint_count=args.waypoints,
+        waypoint_radius=args.waypoint_radius,
+        waypoint_capture_width=args.waypoint_capture_width,
+    )
+    env = LimoWaypointRLEnv(config=config, enable_ros=not args.no_ros)
     model = PPO.load(args.model_path, env=env, device="cpu")
     episodes: list[dict[str, float | str]] = []
     try:
